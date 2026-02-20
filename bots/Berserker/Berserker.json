@@ -1,0 +1,10 @@
+{
+  "name": "Berserker",
+  "version": "1.0",
+  "authors": ["jaerwin"],
+  "description": "Pure aggression tank. Charges enemies, fires at maximum power, and never retreats. Maximizes damage output at the cost of self-preservation.",
+  "homepage": "",
+  "countryCodes": ["us"],
+  "platform": "Python",
+  "programmingLang": "Python 3"
+}

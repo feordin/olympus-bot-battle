@@ -1,0 +1,530 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tank Royale - Battle Observer</title>
+<style>
+  :root {
+    --bg: #0a0e14;
+    --bg-card: #141820;
+    --border: #1e2a3a;
+    --text: #c8d0dc;
+    --text-dim: #6a7a8a;
+    --text-bright: #e8ecf2;
+    --accent: #00d4ff;
+    --green: #00e676;
+    --yellow: #ffca28;
+    --orange: #ff9100;
+    --red: #ff4444;
+    --purple: #e040fb;
+    --gold: #ffd700;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif;
+    min-height: 100vh;
+    max-width: 480px;
+  }
+
+  /* ── Header ── */
+  .header {
+    background: linear-gradient(180deg, #121824 0%, var(--bg) 100%);
+    border-bottom: 1px solid var(--border);
+    padding: 10px 16px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .header h1 {
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--accent);
+    letter-spacing: 1px;
+    text-transform: uppercase;
+  }
+
+  .status-badge {
+    padding: 3px 10px;
+    border-radius: 10px;
+    font-size: 13px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .status-waiting { background: #1a2030; color: var(--text-dim); border: 1px solid var(--border); }
+  .status-running { background: rgba(0, 230, 118, 0.15); color: var(--green); border: 1px solid rgba(0, 230, 118, 0.3); }
+  .status-complete { background: rgba(0, 212, 255, 0.15); color: var(--accent); border: 1px solid rgba(0, 212, 255, 0.3); }
+
+  .header-meta {
+    display: flex;
+    gap: 16px;
+    font-size: 14px;
+    color: var(--text-dim);
+  }
+
+  .header-meta .value { color: var(--text-bright); font-weight: 600; }
+
+  /* ── Connection ── */
+  .connection-bar {
+    padding: 5px 16px;
+    font-size: 13px;
+    text-align: center;
+    display: none;
+  }
+
+  .connection-bar.disconnected {
+    display: block;
+    background: rgba(255, 68, 68, 0.15);
+    color: var(--red);
+  }
+
+  /* ── Content ── */
+  .content { padding: 12px 16px; }
+
+  .section-title {
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    color: var(--text-dim);
+    margin-bottom: 8px;
+  }
+
+  /* ── Bot Rows ── */
+  .bot-list { margin-bottom: 16px; }
+
+  .bot-row {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 12px;
+    margin-bottom: 6px;
+    position: relative;
+    overflow: hidden;
+    transition: opacity 0.3s;
+  }
+
+  .bot-row.dead { opacity: 0.45; border-color: rgba(255, 68, 68, 0.3); }
+
+  .bot-color-bar {
+    position: absolute;
+    top: 0; left: 0; bottom: 0;
+    width: 3px;
+  }
+
+  .bot-row-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 4px;
+  }
+
+  .bot-name-group {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+  }
+
+  .alive-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    background: var(--green);
+    box-shadow: 0 0 5px var(--green);
+    animation: pulse 2s ease-in-out infinite;
+  }
+
+  .alive-dot.dead {
+    background: var(--red);
+    box-shadow: 0 0 3px var(--red);
+    animation: none;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+  }
+
+  .bot-name {
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--text-bright);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .energy-text {
+    font-size: 15px;
+    font-weight: 700;
+    flex-shrink: 0;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .energy-text.high { color: var(--green); }
+  .energy-text.medium { color: var(--yellow); }
+  .energy-text.low { color: var(--orange); }
+  .energy-text.critical { color: var(--red); }
+
+  .energy-bar {
+    height: 4px;
+    background: #1a2030;
+    border-radius: 2px;
+    overflow: hidden;
+    margin-bottom: 5px;
+  }
+
+  .energy-bar-fill {
+    height: 100%;
+    border-radius: 2px;
+    transition: width 0.3s ease;
+    background: var(--green);
+  }
+
+  .energy-bar-fill.medium { background: var(--yellow); }
+  .energy-bar-fill.low { background: var(--orange); }
+  .energy-bar-fill.critical { background: var(--red); }
+
+  .bot-row-stats {
+    display: flex;
+    gap: 12px;
+    font-size: 14px;
+  }
+
+  .bot-row-stats .stat-label { color: var(--text-dim); }
+  .bot-row-stats .stat-value { color: var(--text-bright); font-weight: 600; font-variant-numeric: tabular-nums; }
+
+  /* ── Scoreboard ── */
+  .scoreboard { margin-bottom: 16px; }
+
+  .score-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 26px;
+  }
+
+  .score-table th {
+    text-align: left;
+    padding: 6px 8px;
+    font-size: 17px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-dim);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .score-table th.num { text-align: right; }
+
+  .score-table td {
+    padding: 5px 8px;
+    border-bottom: 1px solid rgba(30, 42, 58, 0.4);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .score-table td.num { text-align: right; }
+  .score-table .rank-1 td { color: var(--gold); }
+  .score-table .rank-2 td { color: #c0c0c0; }
+  .score-table .rank-3 td { color: #cd7f32; }
+  .rank-cell { font-weight: 700; width: 36px; }
+
+  /* ── Awards ── */
+  .awards { margin-bottom: 16px; }
+
+  .awards-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+
+  .award-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px;
+    text-align: center;
+    animation: awardAppear 0.5s ease-out;
+  }
+
+  @keyframes awardAppear {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .award-icon { font-size: 22px; margin-bottom: 4px; }
+  .award-title { font-size: 20px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 2px; }
+  .award-bot { font-size: 20px; font-weight: 700; color: var(--text-bright); margin-bottom: 2px; }
+  .award-value { font-size: 14px; color: var(--text-dim); }
+
+  /* ── Waiting ── */
+  .waiting-message {
+    text-align: center;
+    padding: 60px 16px;
+    color: var(--text-dim);
+  }
+
+  .waiting-message h2 {
+    font-size: 18px;
+    color: var(--text);
+    margin-bottom: 6px;
+  }
+
+  .waiting-message p { font-size: 14px; }
+
+  .waiting-dots::after {
+    content: '';
+    animation: dots 1.5s steps(4, end) infinite;
+  }
+
+  @keyframes dots {
+    0% { content: ''; }
+    25% { content: '.'; }
+    50% { content: '..'; }
+    75% { content: '...'; }
+  }
+</style>
+</head>
+<body>
+
+<div class="connection-bar" id="connectionBar">Disconnected — reconnecting...</div>
+
+<div class="header">
+  <div>
+    <h1>Tank Royale</h1>
+  </div>
+  <span class="status-badge status-waiting" id="statusBadge">Waiting</span>
+</div>
+<div class="header" style="padding-top: 0; border: none; background: none;">
+  <div class="header-meta" id="headerInfo">
+    <span>Battle Observer</span>
+  </div>
+</div>
+
+<div class="content">
+  <div id="waitingMessage" class="waiting-message">
+    <h2>Waiting for Battle<span class="waiting-dots"></span></h2>
+    <p>Start a battle in Tank Royale to see live stats.</p>
+  </div>
+
+  <div id="battleContent" style="display: none;">
+    <div class="section-title">Combatants</div>
+    <div class="bot-list" id="botList"></div>
+
+    <div class="scoreboard">
+      <div class="section-title">Scoreboard</div>
+      <table class="score-table">
+        <thead>
+          <tr>
+            <th></th>
+            <th>Bot</th>
+            <th class="num">Score</th>
+            <th class="num">Dmg</th>
+            <th class="num">Acc</th>
+            <th class="num">K</th>
+            <th class="num">D</th>
+          </tr>
+        </thead>
+        <tbody id="scoreBody"></tbody>
+      </table>
+    </div>
+
+    <div class="awards" id="awardsSection" style="display: none;">
+      <div class="section-title">Awards</div>
+      <div class="awards-grid" id="awardsGrid"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const ICONS = {
+  trophy: '\u{1F3C6}',
+  crown: '\u{1F451}',
+  skull: '\u{1F480}',
+  sword: '\u{2694}\uFE0F',
+  target: '\u{1F3AF}',
+  shield: '\u{1F6E1}\uFE0F',
+};
+
+let ws = null;
+let reconnectTimer = null;
+
+function connect() {
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  ws = new WebSocket(`${proto}//${location.host}/ws`);
+
+  ws.onopen = () => {
+    document.getElementById('connectionBar').className = 'connection-bar';
+    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+  };
+
+  ws.onclose = () => {
+    document.getElementById('connectionBar').className = 'connection-bar disconnected';
+    reconnectTimer = setTimeout(connect, 2000);
+  };
+
+  ws.onerror = () => { ws.close(); };
+
+  ws.onmessage = (event) => {
+    try { render(JSON.parse(event.data)); } catch (e) { console.error('Parse error:', e); }
+  };
+}
+
+function render(state) {
+  updateHeader(state);
+
+  if (state.status === 'waiting' && (!state.bots || state.bots.length === 0)) {
+    document.getElementById('waitingMessage').style.display = '';
+    document.getElementById('battleContent').style.display = 'none';
+    return;
+  }
+
+  document.getElementById('waitingMessage').style.display = 'none';
+  document.getElementById('battleContent').style.display = '';
+
+  renderBotList(state.bots || []);
+  renderScoreboard(state.bots || []);
+  renderAwards(state.awards);
+}
+
+function updateHeader(state) {
+  const badge = document.getElementById('statusBadge');
+  const info = document.getElementById('headerInfo');
+
+  if (state.status === 'waiting') {
+    badge.className = 'status-badge status-waiting';
+    badge.textContent = 'Waiting';
+    info.innerHTML = '<span>Battle Observer</span>';
+  } else if (state.status === 'running') {
+    badge.className = 'status-badge status-running';
+    badge.textContent = `Round ${state.currentRound} / ${state.numRounds}`;
+    info.innerHTML = `
+      <span>Turn <span class="value">${state.currentTurn}</span></span>
+      <span>Battle <span class="value">#${state.battleCount}</span></span>
+    `;
+  } else if (state.status === 'complete') {
+    badge.className = 'status-badge status-complete';
+    badge.textContent = 'Complete';
+    info.innerHTML = `
+      <span><span class="value">${state.numRounds}</span> rounds</span>
+      <span>Battle <span class="value">#${state.battleCount}</span></span>
+    `;
+  }
+}
+
+function eClass(energy) {
+  if (energy > 60) return '';
+  if (energy > 30) return 'medium';
+  if (energy > 10) return 'low';
+  return 'critical';
+}
+
+function eTextClass(energy) {
+  if (energy > 60) return 'high';
+  if (energy > 30) return 'medium';
+  if (energy > 10) return 'low';
+  return 'critical';
+}
+
+function renderBotList(bots) {
+  const list = document.getElementById('botList');
+  const sorted = [...bots].sort((a, b) => {
+    if (a.alive !== b.alive) return a.alive ? -1 : 1;
+    return b.energy - a.energy;
+  });
+
+  let html = '';
+  for (const bot of sorted) {
+    const color = bot.bodyColor || '#888888';
+    const ec = eClass(bot.energy);
+    const energyPct = Math.max(0, Math.min(100, bot.energy));
+    const acc = bot.shotsFired > 0 ? bot.accuracy.toFixed(0) + '%' : '-';
+
+    html += `
+      <div class="bot-row${bot.alive ? '' : ' dead'}">
+        <div class="bot-color-bar" style="background: ${color};"></div>
+        <div class="bot-row-top">
+          <div class="bot-name-group">
+            <div class="alive-dot ${bot.alive ? '' : 'dead'}"></div>
+            <span class="bot-name">${esc(bot.name)}</span>
+          </div>
+          <span class="energy-text ${eTextClass(bot.energy)}">${bot.alive ? bot.energy.toFixed(0) : 'DEAD'}</span>
+        </div>
+        <div class="energy-bar">
+          <div class="energy-bar-fill ${ec}" style="width: ${energyPct}%"></div>
+        </div>
+        <div class="bot-row-stats">
+          <span><span class="stat-label">Dmg </span><span class="stat-value">${bot.totalDamageDealt.toFixed(0)}</span></span>
+          <span><span class="stat-label">Acc </span><span class="stat-value">${acc}</span></span>
+          <span><span class="stat-label">K </span><span class="stat-value">${bot.kills}</span></span>
+          <span><span class="stat-label">Shots </span><span class="stat-value">${bot.shotsFired}</span></span>
+        </div>
+      </div>`;
+  }
+  list.innerHTML = html;
+}
+
+function renderScoreboard(bots) {
+  const tbody = document.getElementById('scoreBody');
+  const sorted = [...bots].sort((a, b) => b.totalScore - a.totalScore);
+
+  let html = '';
+  for (let i = 0; i < sorted.length; i++) {
+    const bot = sorted[i];
+    const rankClass = i < 3 ? ` rank-${i + 1}` : '';
+    const acc = bot.shotsFired > 0 ? bot.accuracy.toFixed(0) + '%' : '-';
+    html += `<tr class="${rankClass}">
+      <td class="rank-cell">#${i + 1}</td>
+      <td>${esc(bot.name)}</td>
+      <td class="num">${bot.totalScore}</td>
+      <td class="num">${bot.totalDamageDealt.toFixed(0)}</td>
+      <td class="num">${acc}</td>
+      <td class="num">${bot.kills}</td>
+      <td class="num">${bot.deaths}</td>
+    </tr>`;
+  }
+  tbody.innerHTML = html;
+}
+
+function renderAwards(awards) {
+  const section = document.getElementById('awardsSection');
+  const grid = document.getElementById('awardsGrid');
+
+  if (!awards || awards.length === 0) {
+    section.style.display = 'none';
+    return;
+  }
+
+  section.style.display = '';
+  let html = '';
+  for (const award of awards) {
+    const icon = ICONS[award.icon] || '\u{2B50}';
+    html += `
+      <div class="award-card">
+        <div class="award-icon">${icon}</div>
+        <div class="award-title" style="color: ${award.color}">${esc(award.title)}</div>
+        <div class="award-bot">${esc(award.bot)}</div>
+        <div class="award-value">${esc(award.value)}</div>
+      </div>`;
+  }
+  grid.innerHTML = html;
+}
+
+function esc(str) {
+  const d = document.createElement('div');
+  d.textContent = str || '';
+  return d.innerHTML;
+}
+
+connect();
+</script>
+</body>
+</html>

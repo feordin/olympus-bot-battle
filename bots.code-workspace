@@ -1,0 +1,14 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"path": "../robocode"
+		},
+		{
+			"path": "../tank-royale"
+		}
+	],
+	"settings": {}
+}
