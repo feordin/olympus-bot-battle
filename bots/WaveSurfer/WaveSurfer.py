@@ -31,8 +31,11 @@ from robocode_tank_royale.bot_api.events import (
 
 NUM_BINS = 47  # GuessFactor bins covering -1.0 … +1.0
 MIDDLE_BIN = NUM_BINS // 2  # Index corresponding to GuessFactor 0
-WALL_MARGIN = 40.0  # Stay this far from walls when surfing
+WALL_MARGIN = 50.0  # Stay this far from walls when surfing
+WALL_STICK = 140.0  # Look-ahead distance for wall smoothing
 BOT_RADIUS = 18.0  # Bounding circle radius per game rules
+WALL_DANGER_WEIGHT = 2.5  # Extra danger penalty when surfing toward walls
+CORNER_DANGER_WEIGHT = 5.0  # Extra danger in corners (near two walls)
 
 
 # ---------------------------------------------------------------------------
@@ -91,6 +94,11 @@ class WaveSurfer(Bot):
         self._danger_bins: List[float] = [0.0] * NUM_BINS
         self._surf_direction: int = 1  # +1 = clockwise orbit, -1 = counter-clockwise
 
+        # --- Collision recovery ---
+        self._wall_hit_ticks: int = 0  # Ticks since last wall hit
+        self._bot_hit_ticks: int = 0  # Ticks since last bot collision
+        self._stuck_counter: int = 0  # Consecutive low-speed ticks near obstacle
+
         # --- Radar ---
         self._scan_direction: int = 1
         self._ticks_since_scan: int = 0
@@ -120,11 +128,24 @@ class WaveSurfer(Bot):
         self._last_enemy_energy = 100.0
         self._ticks_since_scan = 0
         self._surf_direction = 1
+        self._wall_hit_ticks = 100
+        self._bot_hit_ticks = 100
+        self._stuck_counter = 0
 
         while self.running:
             self._ticks_since_scan += 1
+            self._wall_hit_ticks += 1
+            self._bot_hit_ticks += 1
 
-            if self._has_target and self._ticks_since_scan < 30:
+            # Stuck detection: if nearly stationary for too long, force escape
+            if abs(self.speed) < 0.5 and (self._wall_hit_ticks < 5 or self._bot_hit_ticks < 5):
+                self._stuck_counter += 1
+            else:
+                self._stuck_counter = 0
+
+            if self._stuck_counter > 4:
+                self._escape_stuck()
+            elif self._has_target and self._ticks_since_scan < 30:
                 self._do_surfing()
                 self._do_gun()
                 self._do_radar()
@@ -176,40 +197,41 @@ class WaveSurfer(Bot):
         self._orbit_enemy()
 
     def _orbit_enemy(self) -> None:
-        """Move perpendicular to the enemy, with wall smoothing."""
+        """Move perpendicular to the enemy, with iterative wall smoothing."""
         bearing = self.bearing_to(self._enemy_x, self._enemy_y)
         distance = self.distance_to(self._enemy_x, self._enemy_y)
 
         # Desired perpendicular heading: bearing ± 90°
-        # Positive surf_direction → clockwise orbit (turn so enemy is to our left)
         offset = 90.0 * self._surf_direction
 
-        # Slight inward/outward adjustment to maintain ~350-unit orbital distance
+        # Inward/outward adjustment to maintain preferred orbital distance
         preferred_dist = 350.0
         if distance < preferred_dist - 50:
-            offset += 15.0  # Push outward a bit
+            offset += 15.0  # Push outward
         elif distance > preferred_dist + 80:
-            offset -= 15.0  # Pull inward a bit
+            offset -= 15.0  # Pull inward
 
         # The turn needed to face our desired orbital heading
         ideal_turn = self._normalize(bearing + offset)
 
-        # Wall smoothing: if our projected position would hit a wall, invert
-        ahead_x = self.x + math.sin(math.radians(self.direction + ideal_turn)) * 160
-        ahead_y = self.y + math.cos(math.radians(self.direction + ideal_turn)) * 160
+        # Iterative wall smoothing: try the desired angle, then gradually
+        # adjust toward the reverse if it would drive into a wall.
+        smoothed_turn = self._wall_smooth(ideal_turn, self._surf_direction)
 
-        if not self._in_safe_zone(ahead_x, ahead_y):
-            # Reverse orbital direction temporarily
-            ideal_turn = self._normalize(bearing - offset)
+        # If smoothing flipped us more than 90° from original, actually
+        # reverse the orbit direction so future decisions stay consistent.
+        if abs(self._normalize(smoothed_turn - ideal_turn)) > 90:
             self._surf_direction *= -1
 
-        self.set_turn_left(ideal_turn)
+        self.set_turn_left(smoothed_turn)
 
         # Always keep moving — speed makes us harder to hit
-        if abs(ideal_turn) < 60:
-            self.set_forward(150)
+        if abs(smoothed_turn) < 60:
+            self.set_forward(160)
+        elif abs(smoothed_turn) < 90:
+            self.set_forward(100)
         else:
-            self.set_forward(80)
+            self.set_forward(60)
 
     def _evaluate_danger(self, wave: Wave, direction: int) -> float:
         """Predict where we'd be if we orbit in `direction`, return danger."""
@@ -221,17 +243,26 @@ class WaveSurfer(Bot):
         sim_y = max(WALL_MARGIN, min(self.arena_height - WALL_MARGIN, sim_y))
 
         gf = self._guess_factor(wave, sim_x, sim_y)
-        return self._get_danger(gf)
+        danger = self._get_danger(gf)
+
+        # Wall proximity penalty — discourage surfing into walls
+        danger += self._wall_danger(sim_x, sim_y)
+
+        return danger
 
     def _project_position(self, direction: int, ticks: int) -> tuple:
         """Rough projection of our position after `ticks` turns of orbiting."""
-        # Simplified: assume we move at ~6 units/tick perpendicular to enemy
         bearing_to_enemy = math.radians(self.direction_to(self._enemy_x, self._enemy_y))
         perp_angle = bearing_to_enemy + direction * (math.pi / 2)
 
         speed = 6.0
         proj_x = self.x + math.sin(perp_angle) * speed * ticks
         proj_y = self.y + math.cos(perp_angle) * speed * ticks
+
+        # Clamp to arena with margin so projection doesn't pretend we can
+        # be outside the arena (which skews GuessFactor evaluation)
+        proj_x = max(WALL_MARGIN, min(self.arena_width - WALL_MARGIN, proj_x))
+        proj_y = max(WALL_MARGIN, min(self.arena_height - WALL_MARGIN, proj_y))
         return proj_x, proj_y
 
     # ===================================================================
@@ -416,18 +447,50 @@ class WaveSurfer(Bot):
         self._scan_direction *= -1
 
     def on_hit_wall(self, e: HitWallEvent) -> None:
-        """Bounce off walls — reverse and flip orbit direction."""
+        """Turn toward arena center and drive away from the wall."""
         del e
-        self.set_back(60)
+        self._wall_hit_ticks = 0
+
+        # Head toward the arena center to guarantee escaping the wall
+        center_x = self.arena_width / 2
+        center_y = self.arena_height / 2
+        bearing_to_center = self.bearing_to(center_x, center_y)
+
+        # If facing roughly toward center, go forward; otherwise back up
+        # briefly then turn.
+        if abs(bearing_to_center) < 90:
+            self.set_turn_left(bearing_to_center)
+            self.set_forward(100)
+        else:
+            self.set_back(40)
+            self.set_turn_left(bearing_to_center)
+
         self._surf_direction *= -1
 
     def on_hit_bot(self, e: HitBotEvent) -> None:
-        """Point-blank fire when colliding with an enemy."""
-        gun_bearing = self.gun_bearing_to(float(e.x), float(e.y))
+        """Fire point-blank, then escape perpendicular to the collision."""
+        self._bot_hit_ticks = 0
+        ex, ey = float(e.x), float(e.y)
+
+        # Shoot if the gun is vaguely aimed
+        gun_bearing = self.gun_bearing_to(ex, ey)
         self.set_turn_gun_left(gun_bearing)
         if abs(gun_bearing) < 30:
             self.set_fire(3.0)
-        self.set_back(50)
+
+        # Escape perpendicular to the enemy — avoids driving into them again
+        bearing_to_enemy = self.bearing_to(ex, ey)
+        escape_angle = self._normalize(bearing_to_enemy + 90 * self._surf_direction)
+
+        # If that escape would hit a wall, try the other perpendicular
+        ahead_x = self.x + math.sin(math.radians(self.direction + escape_angle)) * 100
+        ahead_y = self.y + math.cos(math.radians(self.direction + escape_angle)) * 100
+        if not self._in_safe_zone(ahead_x, ahead_y):
+            escape_angle = self._normalize(bearing_to_enemy - 90 * self._surf_direction)
+            self._surf_direction *= -1
+
+        self.set_turn_left(escape_angle)
+        self.set_forward(80)
 
     def on_bot_death(self, e: BotDeathEvent) -> None:
         """Clear target if it was destroyed."""
@@ -455,6 +518,82 @@ class WaveSurfer(Bot):
         # Perpendicular to (enemy→us): rotate 90° CW
         lateral = vx * math.cos(angle_enemy_to_us) - vy * math.sin(angle_enemy_to_us)
         return 1 if lateral >= 0 else -1
+
+    def _wall_smooth(self, desired_turn: float, direction: int) -> float:
+        """
+        Iterative wall smoothing.  Starting from `desired_turn`, check if
+        moving WALL_STICK units in that direction would leave the safe zone.
+        If so, incrementally rotate the heading away from the wall until it
+        fits, up to a full reversal.
+        """
+        step = 5.0  # degrees per iteration
+        max_iterations = 36  # up to 180° adjustment
+
+        best_turn = desired_turn
+        for i in range(max_iterations + 1):
+            test_turn = self._normalize(desired_turn - direction * step * i)
+            abs_heading = self.direction + test_turn  # heading if we turned this much
+            ahead_x = self.x + math.sin(math.radians(abs_heading)) * WALL_STICK
+            ahead_y = self.y + math.cos(math.radians(abs_heading)) * WALL_STICK
+            if self._in_safe_zone(ahead_x, ahead_y):
+                best_turn = test_turn
+                break
+        else:
+            # All iterations failed — just head toward center
+            best_turn = self.bearing_to(self.arena_width / 2, self.arena_height / 2)
+
+        return best_turn
+
+    def _wall_danger(self, x: float, y: float) -> float:
+        """
+        Return an extra danger value based on proximity to arena walls.
+        Being near one wall is penalized; being in a corner (near two walls)
+        is penalized more heavily.
+        """
+        danger = 0.0
+        walls_close = 0
+
+        dist_left = x
+        dist_right = self.arena_width - x
+        dist_bottom = y
+        dist_top = self.arena_height - y
+
+        for dist in (dist_left, dist_right, dist_bottom, dist_top):
+            if dist < WALL_MARGIN * 2:
+                # Linearly increasing danger as we approach the wall
+                danger += WALL_DANGER_WEIGHT * (1.0 - dist / (WALL_MARGIN * 2))
+                walls_close += 1
+
+        # Extra penalty for corners (near two or more walls)
+        if walls_close >= 2:
+            danger += CORNER_DANGER_WEIGHT
+
+        return danger
+
+    def _escape_stuck(self) -> None:
+        """
+        Emergency escape when stuck (repeated low-speed ticks near an
+        obstacle).  Drive hard toward the arena center.
+        """
+        self._stuck_counter = 0
+        center_x = self.arena_width / 2
+        center_y = self.arena_height / 2
+        bearing = self.bearing_to(center_x, center_y)
+
+        if abs(bearing) < 90:
+            self.set_turn_left(bearing)
+            self.set_forward(200)
+        else:
+            # Faster to reverse than turn 180°
+            self.set_turn_left(self._normalize(bearing + 180))
+            self.set_back(200)
+
+        self._surf_direction *= -1
+
+        # Still do gun + radar if we have a target
+        if self._has_target and self._ticks_since_scan < 30:
+            self._do_gun()
+            self._do_radar()
 
     def _in_safe_zone(self, x: float, y: float) -> bool:
         """True if (x, y) is comfortably inside the arena walls."""
