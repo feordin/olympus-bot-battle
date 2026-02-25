@@ -1,0 +1,10 @@
+{
+  "name": "WaveSurfer",
+  "version": "1.0",
+  "authors": ["rojo"],
+  "description": "Wave-surfing defensive bot. Detects enemy fire via energy-drop monitoring, tracks expanding bullet waves, and dodges to the lowest-danger GuessFactor position. Uses linear predictive targeting for offense.",
+  "homepage": "",
+  "countryCodes": ["us"],
+  "platform": "Python",
+  "programmingLang": "Python 3"
+}
